@@ -1,0 +1,591 @@
+---
+title: "Virginia Evictions"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+    theme: 
+      version: 4
+      bootswatch: lux
+runtime: shiny
+---
+<br> 
+<br> 
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE)
+```
+
+
+```{r lib, include=FALSE}
+# ..................................................
+# Load packages ----
+library(tidyverse)
+library(scales)
+library (janitor)
+library(ggthemes)
+library(kableExtra)
+library(DT)
+library(wesanderson)
+library(sf) # the primary spatial package for today
+library(tigris) # to call Census boundary files
+library(rcartocolor)
+library(lubridate)
+library(leaflet)
+library(rcartocolor)
+library(sf)
+library(patchwork)
+library(reactable)
+library(RColorBrewer)
+library(reactablefmtr)
+library(shiny)
+library(shinyWidgets)
+library(zipcodeR)
+library(flexdashboard)
+library(ggiraph)
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(shinythemes)
+library(mapview)
+
+options(tigris_use_cache = TRUE)
+```
+
+
+```{r ex1data}
+
+# ..................................................
+
+# Reading in data ----
+load("../data/eviction.Rdata")
+
+```
+
+
+# Introduction {data-orientation="rows"}
+
+## Quick Stats: Overall
+
+### Principal Amount
+
+```{r, echo=FALSE}
+overall_mean_principal=round(mean(richmond_plaintiff_low$mean_principal, na.rm = TRUE), 2)
+valueBox(overall_mean_principal, caption= "the average principal amount", icon='fa-home')
+```
+
+### Attorney Fees Amount
+
+```{r, echo=FALSE}
+overall_mean_attyfees=round(mean(richmond_plaintiff_low$mean_attyfees, na.rm = TRUE), 2)
+valueBox(overall_mean_attyfees, caption= "the average attorney free", icon='fa-dollar')
+
+```
+
+### Attorney Fees in Comparision to Principal Amount
+
+```{r, echo=FALSE}
+overall_mean_mean_feepct=round(mean(richmond_plaintiff_low$mean_feepct, na.rm = TRUE), 2)
+valueBox(overall_mean_mean_feepct, caption= "the average percent of attorney frees for principal amount", icon='fa-percentage')
+
+```
+
+
+## About intro
+
+### About the Data
+
+This data will explore the changing relationship between attorney fees and principal amounts in eviction cases. An Attorney fee is the amount of money billed to a client for legal services, while the principal amount is the amount awarded by the court as damages due to the breach of contract. Landlords seek to evict their residents when, after signing the lease to the residency, the agreement is breached. Common lease violations include unpaid rent or tenants breaking the law. If the landlord wins the case, the tenant will be forced to leave the property. Based on the lease agreement and local laws, an evicted tenant may be responsible for paying the landlord's court filing fees, attorney fees, unpaid rent, and/or damages and penalties. These costs are all included in the principal amount. Under Virginia Law, landlords can recover actual damages and reasonable attorney fees if the tenant refuses to allow reasonable access to the unit, fails to properly vacate the property after the termination of the agreement, does not comply with the rental agreement, or inserts improper defense in an eviction proceeding. Eviction experts in the area reported noticing a trend where in leases that assisted in the cause of eviction, twenty-five percent of the costs being sought will be deemed a reasonable attorney fee; in this data, we will determine the validity of this observation. 
+
+### Acknowledgment: 
+Before exploring this data, we would first like to acknowledge that we are not experts in the field, nor have we been present in these courts deciding the outcome of these eviction proceedings. Many variables in the data lacked specificity, so our data analysis may have flaws. We are human, and though we tried to educate ourselves on this issue, we are all prone to our biases, which may have impacted our data analysis. Our analysis may also not accurately reflect the heartache and stress during these cases. Housing insecurity is terrifying, and each of the cases discussed in this analysis represents an individual or a family having to a through a process where having a roof over their head becomes an unknown. It’s vital that while exploring our analysis, we recognize that this data is not just numbers but actual people, maybe even your  neighbor. It’s also important to note that this database relies upon human involvement, including manually entering the data sets. With all human involvement, there are errors; this is especially evident in the inconsistency in recorded landlord names; these human errors may create inconsistencies in our analysis.   
+
+### Data Cleaning Choices: 
+
+Unlike most states, cities and countries are not categorized together. Therefore cities such as Richmond can often have a higher rate of eviction filings because they do not include wealthier surrounding countries where eviction rates are generally lower. To provide a more accurate representation of the trends in the area, we included Richmond City, Chesterfield, Hanover and Henrico, which is consider the Greater Richmond Area. We choose to combine Richmond-Civil General District Court and Richmond City General District Court as they refer to the same area. In order to determine the accuracy of the observed trends in reasonable attorney fees in the area, we compared the Attorney Fees awarded with the Principal Amounts. In order to condense the data, we tried to combine rows with what we researched were the same landlords documented under differing names. To observe Richmond City and the Surrounding Area, we filtered the data using the flip codes: 763, 760, 087, 041. We chose not to include 2023 as the Court data available did not include the whole year. To be able to analyze this data, we changed NA to zero; we did this first because by filtering out any recent court cases, NA would represent a lack of decision instead, it would only represent a lack of application which in this scenario equates to zero.   
+
+
+
+# Initial Trends  {data-orientation="column"}
+
+
+```{r, out.width="100%", out.height="auto"}
+year_richmond_evictions<-evictions %>%
+  select(county, plaintiff_name, plaintiff_attorney,
+         principal_amount, attorney_fees,
+         costs, other_amount, other_awarded, interest_award, defendant_zip, plaintiff_zip, fips, filed_year, county) %>%
+  mutate(filed_year= as.numeric(filed_year),county= str_replace(
+    county,"Richmond-Civil General District Court","Richmond City General District Court"), amount_num = str_remove(principal_amount, fixed("$")),
+         amount_num = str_remove(amount_num, ","),
+         amount_num = as.numeric(amount_num),
+         principal_amount = ifelse(amount_num == 0, NA_character_, principal_amount),
+         fees = as.numeric(attorney_fees),
+         fees = ifelse(is.na(fees), 0, fees),
+         attorney_fees = ifelse(fees == 0, NA_character_, attorney_fees),
+         amount_fee = amount_num+fees,
+         amount_fee = ifelse(is.na(amount_fee) & !is.na(fees), fees, amount_fee),
+         fee_percent = fees/(amount_fee)*100,
+         fee_percent = ifelse(is.nan(fee_percent), NA_real_, fee_percent))%>%
+  filter(county %in% c("Richmond City General District Court", "Chesterfield General District Court", "Henrico General District Court", "Hanover General District Court"))%>%
+   filter(filed_year != 2023) %>% 
+  group_by(county, filed_year) %>%
+  summarize(evictions = n(),
+            mean_feepct = round(mean(fee_percent, na.rm = TRUE),1),
+            county = first(county))
+
+
+
+P <- year_richmond_evictions %>%
+  ggplot(aes(x = filed_year, y = mean_feepct, color = county)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept = 2020, linetype = 2, color = "black") +
+  annotate("text", x = 2020, y = 26, size = 3, hjust = 0, color = "black", 
+           label = "The CARES Act is passed") +
+  labs(title = "The Change in Attorney Fees", 
+       subtitle = "The Percentage of Attorney Fees for Principal Amount in the Richmond Area from 2016 to 2022",
+       caption = "Source: Virginia Eviction Lab 2016-2022",
+       x = "Year", y = "Percentage", color = "County") +
+  scale_color_brewer(palette = "BrBG") 
+
+ggplotly(P, tooltip = c("County", "Year", "Percentage"), 
+         hoverinfo = "text", dynamicTicks = TRUE, 
+         args = list(visible = "legendonly")) %>% 
+  layout(legend = list(orientation = "h", y = -0.2)) %>% 
+  config(displayModeBar = TRUE)
+
+
+```
+
+<br>
+
+### Policies that Could Impact Our Observations: 
+
+Due to the pandemic, there were major changes in eviction policy. On October 4, 2020, the Centers for Disease Control (CDC) issued the CARES Act. This act provided for protection for most tenants in federally subsidized or federal back housing. These projections included limits on eviction and fees due to not being able to afford rent payments. The Act expired on March 27, 2022. Virginia also offered the Virginia Rent Relief Program (RRP), which provided rent assistants. This RRP was implemented between 2021 and Oct 14, 2022.  These two acts may explain the decrease in the percentage of Attorney fees per Principal Amount as the overall amount of evictions decreased. While Observing the trends over time, it’s important to note that the pandemic caused major backlogs in court cases; therefore, data from 2021 through 2023 may lack reliability. The graph does reveal an upward trend after 2019 and a percentage of Attorney fees close to twenty-five percent of the Principal Amount. A 14-day Notice and Payment Plan Offer was offered until July 1, 2022, and it required landlords to give tenants five days to pay what was owed if they did not make the rent deadline. 
+
+
+# Landlord Watch {data-orientation="column"}
+
+## Eviction Trends  
+```{r, echo=FALSE}
+
+
+library(shinydashboard)
+box(
+  title = "Trends Amoung Landlords",
+  status = "info",
+  solidHeader = TRUE,
+  width = "100%",
+  height = "200px", 
+  background = "black",
+  opacity= 0.5,
+  "Recent research by the RVA Eviction Lab has uncovered a concerning trend across the state of Virginia: a subset of firms are responsible for the majority of eviction cases. However, this trend is particularly evident in Richmond, where just 15 companies were found to be responsible for almost half of all eviction cases filed in the city. This concentration of power in the hands of a few landlords is not only destabilizing for tenants, but it also perpetuates poverty and inequality by triggering job loss, loss of housing, and other negative consequences. The study highlights the predatory behavior of these landlords towards vulnerable low-income tenants who lack resources to fight eviction cases in court. In Richmond, landlords of lower-quality buildings represent nine percent of all rental homes in the city yet are responsible for twenty-five percent of all evictions. Some landlords employ tactics such as withholding necessary repairs and maintenance to force tenants out or charge exorbitant late fees that can accumulate into unmanageable debt. This combination of concentrated power and predatory behavior has created a crisis in Richmond, where evictions have become a significant contributor to poverty and inequality. To address this pressing issue, a comprehensive approach is required, including policy interventions, community organizing, and legal assistance for vulnerable tenants. By mapping eviction frequency by year, it is possible to identify and hold accountable the landlords responsible for this crisis. By graphing based on the year and frequency of eviction, we hoped to reveal these landlords so tenants can make more informed decisions.",  style = "background-color: rgba(192,192,192,0.4);"
+)
+
+
+
+```
+
+## Inputs {.sidebar}
+```{r, echo=FALSE}
+year_choices <- c("2016",
+              "2017",
+              "2018",
+              "2019",
+              "2020",
+              "2021",
+              "2022")
+
+# Side bar selection
+radioButtons(
+  "year_selection",
+  label = "Select a Year",
+  choices = year_choices,
+  selected='2022')
+```
+
+## Ten Plaintiffs with the highest disparity
+
+```{r}
+#count the number by plaintiff name(frequency)
+
+freq_richmond_region <- richmond_plaintiff%>%
+  select(plaintiff_name, filed_year, mean_feepct)
+
+
+renderPlot({
+
+top_ten_name_richmond_region <-freq_richmond_region %>%
+  filter(filed_year == input$year_selection) %>%
+  count(plaintiff_name, name="total")%>%
+  arrange(desc(total))%>%
+  head(n=10)
+  
+ggplot(top_ten_name_richmond_region, aes(x=plaintiff_name, y=total, fill = plaintiff_name)) +
+  geom_bar(stat = "identity")+
+  theme_minimal() +
+  scale_fill_brewer(palette = "BrBG") +
+  coord_flip() +
+  theme(legend.position = 'none') +
+  labs(title = "Top Ten Plantiffs with the Most Number of Evictions", 
+  caption= "Source: Virginia Eviction Lab 2016-2022", 
+       x = "Plantiff Name", y = "Number of Evictions", 
+       color = "") 
+  
+})
+
+```
+
+## In Our Data: Trends in Landlords  
+
+```{r}
+renderPlot({
+
+  freq_richmond_region <- evictions %>% 
+    select(plaintiff_name, filed_year, judgment) %>% 
+    filter(filed_year == input$year_selection & judgment == "Plaintiff") %>%
+    group_by(plaintiff_name) %>%
+    summarize(total_evictions = n()) %>%
+    arrange(desc(total_evictions)) %>%
+    head(n = 10)
+  
+  ggplot(freq_richmond_region, aes(x = plaintiff_name, y = total_evictions, fill = plaintiff_name)) +
+    geom_bar(stat = "identity") +
+    theme_minimal() +
+    scale_fill_brewer(palette = "BrBG") +
+    coord_flip() +
+    theme(legend.position = 'none') +
+    labs(title = "Top Ten Plaintiffs with the Most Plaintiff Judgments",
+         subtitle = paste0("Year Filed: ", input$year_selection),
+         caption = "Source: Virginia Eviction Lab 2016-2022",
+         x = "Plaintiff Name", y = "Number Ruling Resulting in Evictions")
+})
+
+```
+
+## Know Your Rights
+```{r, echo=FALSE}
+library(shinydashboard)
+box(
+  title = "Know Your Rights",
+  status = "info",
+  solidHeader = TRUE,
+  width = "100%",
+  height = "200px",
+  background = "black",
+  opacity= 0.5,
+  "In Virginia, tenants have certain rights and protections under the law. For example, landlords are required to provide safe and habitable housing, which means they must maintain the property in good repair and address any health or safety hazards. Additionally, tenants have the right to privacy and cannot be evicted without proper notice and legal proceedings. If a landlord does attempt to evict a tenant, the tenant may have defenses available, such as a failure to follow proper eviction procedures or retaliatory eviction. Tenants who are facing eviction may also be eligible for legal assistance through organizations such as Virginia Legal Aid.It's important for tenants to know their rights and to seek help if they are facing eviction or other housing issues.",
+  style = "background-color: rgba(192,192,192,0.4);"
+)
+
+```
+
+
+
+
+# Explore the Data {data-orientation="rows"}
+```{r, echo=FALSE}
+reactable(richmond_plaintiff_low,
+          columns = list(
+            plaintiff_name = colDef(name = "Plaintiff"),
+            evictions = colDef(name = "Evictions"),
+            pct_principal = colDef(name = "Principal Charged",
+                                   format = colFormat(suffix = "%")),
+            mean_principal = colDef(name = "Average Amount",
+                                    format = colFormat(prefix = "$")),
+            pct_attyfees = colDef(name = "Fees Charged",
+                                  format = colFormat(suffix = "%"),
+                                  cell = data_bars(richmond_plaintiff_low,
+                                                   number_fmt = scales::percent_format(scale = 1),
+                                                   fill_color = rcartocolor::carto_pal(n = 4, "TealRose")[4],
+                                  )),
+            mean_attyfees = colDef(name = "Average Amount",
+                                   format = colFormat(prefix = "$")),
+            mean_feepct = colDef(name = "Percent of Cost",
+                                 format = colFormat(suffix = "%"),
+                                 style = color_scales(richmond_plaintiff_low, 
+                                                      colors = rcartocolor::carto_pal(n = 4, "TealRose"))) 
+          ),
+          columnGroups = list(
+            colGroup(name = "Principal Amount", columns = c("pct_principal", "mean_principal")),
+            colGroup(name = "Attorney Fees", columns = c("pct_attyfees", "mean_attyfees", "mean_feepct"))
+          ),
+          showSortable = TRUE, filterable = TRUE, defaultPageSize = 10)
+
+
+```
+
+<br>
+
+### Defining the Columns 
+
+A plaintiff is a person who brings the case against another in this case plaintiff represents the landlord. Using this column, viewers may search for the name of their landlord. 
+The column titled Evictions reveals the number of eviction trials the landlord has won. The average amount of principal amount reveals the average amount the tenants who were evicted were charged due to damages and the average amount of attorney fees reveals the average amount evicted tenants were charged due to the landlord recovering the Attorney Fees. The Percent Cost reveals the percentage of evicted tenants who were charged in comparison to the Principal Amount. 
+
+<br>
+
+### Top Offenders 
+
+The top landlords with the highest Percent of Cost include Richmond Redevelopment and Housing Hillside, CSRA Perry Place Lessee DST, King Point LLC, and Crossing at Bramble Wood Apartments.
+
+
+# Disparities {data-orientation="column"}
+
+
+## Map {.my-header} 
+
+```{r,  out.width="100%", out.height="auto"}
+
+# Reading in data ----
+load("../data/maps.Rdata")
+
+
+ric_zcta <- st_read("https://dsl.richmond.edu/panorama/redlining/static/downloads/geojson/VARichmond1937.geojson", quiet = TRUE)
+
+
+# join data
+ric_zcta_eviction <- va_zcta %>% 
+  left_join(richmond_plaintiff_zip, by = c("ZCTA5CE10" = "plaintiff_zip"))
+
+zip_list <- c(23173, 23219, 23220, 23221, 23222, 23223, 23224, 23225, 23226, 23227, 23230, 23234, 23235)
+
+ric_zcta_eviction <- ric_zcta_eviction %>%
+  filter(ZCTA5CE10 %in% zip_list)
+
+# transform data
+ric_zcta_eviction <- st_transform(ric_zcta_eviction, 4326)
+
+# create palette function
+pal <- colorNumeric(carto_pal(7, "Mint"), 
+                    reverse = FALSE, 
+                    domain = ric_zcta_eviction$mean_feepct)
+
+# load redlining data
+rr <- st_read("https://dsl.richmond.edu/panorama/redlining/static/downloads/geojson/VARichmond1937.geojson", quiet = TRUE)
+
+
+
+
+# create the map with layer control
+# create the map with layer control
+leaflet() %>% 
+  addProviderTiles("CartoDB.Positron") %>% 
+  addPolygons(data = ric_zcta_eviction, 
+              fillColor = ~pal(mean_feepct),
+              fillOpacity = 0.8,
+              weight = 2, 
+              opacity = 1,
+              color = "white",
+              highlight = highlightOptions(
+                weight = 3,
+                fillOpacity = 0.9,
+                bringToFront = T),
+              popup = paste0("Zip Code: ", ric_zcta_eviction$ZCTA5CE10, "<br>",
+                             "Avg Amount: ", round(ric_zcta_eviction$mean_feepct, 0))) %>%
+  addPolygons(data = richmond,
+              fillColor = NA,
+              fillOpacity = 0,
+              color = "brown") %>% 
+  addPolygons(data = rr,
+              fillColor = c("black", "orange", "purple","red"),
+              fillOpacity = 0.8,
+              weight = 2, 
+              opacity = 1,
+              color = "grey",
+              group= "holc_grade")%>%
+  addLegend("topright", colors =c("black", "orange", "purple","red"), labels = c("A","B", "C", "D"), 
+            title = "Grade", opacity = 0.7)%>%
+  addLegend("bottomright", pal = pal, values = ric_zcta_eviction$mean_feepct, 
+            title = "Avg Amount", opacity = 0.7) %>%
+  addLayersControl(overlayGroups = c("holc_grade"), 
+                   position = "topright", 
+                   options = layersControlOptions(collapsed = FALSE))
+
+
+
+
+
+```
+
+## Redlining 
+```{r, echo=FALSE}
+
+library(shiny)
+
+box(
+  title = "Redlining",
+  status = "info",
+  solidHeader = TRUE,
+  width = "100%",
+  height = "200px",
+   background = "black",
+  opacity= 0.5,
+  "Evictions have a the heavist burden on Black residents in Virginia, who are more likely to be evicted due to systemic factors such as poverty, lack of affordable housing, and discrimination. According to data from the Eviction Lab at Princeton University, Richmond, Virginia has one of the highest eviction rates in the country, with a rate of 11.44%. Moreover, eviction rates in majority-Black neighborhoods are twice as high as in majority-White neighborhoods, indicating that Black tenants are disproportionately impacted by eviction. Evictions have significant consequences for the financial stability and mental health of Black families, including frequent moves, housing instability, disrupted education, and difficulties in finding new housing due to eviction records. Moreover, Black renters often lack access to legal representation during the eviction process, making them more vulnerable to coercion by landlords and exacerbating their challenges.
+  In the 1930s, Richmond neighborhoods were divided by the federal government based on how risky they were to invest in because the residents were Black. These policies reinforced racial segregation by rerouting investments away from neighborhoods populated by minorities. In Richmond, the legacy of redlining has contributed to higher rates of poverty and eviction among Black and Brown residents. These communities are more likely to live in low-income housing and experience housing instability, making them vulnerable to eviction and homelessness. Richmond's Black residents are also more likely to live in areas with higher levels of pollution and environmental hazards, increasing their vulnerability to climate change impacts.
+  By comparing the percentage of attorney fees to the principal amount in Richmond to historical redlining maps, we can observe if rising attorney fees are impacting historically Black communities more than other districts. Given the legacy of redlining, it is possible that these areas may be more vulnerable to the impact of change in attorney fees seen in eviction proceedings.", style = "background-color: rgba(192,192,192,0.4);"
+)
+
+
+
+
+```
+
+
+## In Our Data: Judgments  
+
+````{r, out.width="100%", out.height="auto"}
+first_case_examination <- evictions %>% 
+  select(fips, judgment, filed_year, county, plaintiff_name) %>% 
+  mutate(county = str_replace(county, "Richmond-Civil General District Court", "Richmond City General District Court")) %>%
+  filter(county %in% c("Richmond City General District Court", "Chesterfield General District Court", "Henrico General District Court", "Hanover General District Court")) %>%
+  filter(filed_year!= 2023)
+
+
+first_eviction_summary <- first_case_examination %>%
+  group_by(filed_year, county, judgment) %>%
+  summarise(num_evictions = n()) %>%
+  ungroup()
+ggplotly(
+  ggplot(data = first_eviction_summary, aes(x = filed_year, y = num_evictions, fill = judgment)) +
+    geom_bar(stat = "identity", position = "stack") +
+    facet_wrap(~ county) +
+    labs(title = "Evictions by Judgment and County",
+         x = "Year Filed",
+         y = "Court Decision by District Court") +
+    theme(legend.position = "bottom") +
+    scale_fill_brewer(palette = "BrBG")
+    
+)
+
+
+```
+
+## Eviction  
+```{r, echo=FALSE}
+library(shinydashboard)
+box(
+  title = "Evictions Court Case Verdict Trends",
+  status = "info",
+  solidHeader = TRUE,
+  width = "100%",
+  height = "200px",
+   background = "black",
+  opacity= 0.5,
+  "According to a report by the Housing and Economic Rights Advocates (HERA), tenants lose in 95% of eviction court cases in California. This statistic highlights the significant power imbalance between landlords and tenants in eviction proceedings. Landlords are more likely to win these cases due to their greater access to resources such as legal representation, knowledge of the legal system, and financial means to hire attorneys.This power imbalance is particularly pronounced for low-income tenants who may not have access to legal representation, language support, or other resources necessary to defend themselves in court. These tenants may also face other barriers such as discrimination, lack of stable housing, and limited financial resources, further increasing their vulnerability in eviction proceedings.This power imbalance is particularly pronounced for low-income tenants who may not have access to legal representation, language support, or other resources necessary to defend themselves in court. These tenants may also face other barriers such as discrimination, lack of stable housing, and limited financial resources, further increasing their vulnerability in eviction proceedings.", style = "background-color: rgba(192,192,192,0.4);"
+)
+
+```
+
+## In Our Data: Trends over Time    
+
+````{r, out.width="100%", out.height="auto"}
+
+case_examination_county <- evictions %>% 
+  select(fips, judgment, filed_year, county, plaintiff_name) %>% 
+  mutate(county = str_replace(county, "Richmond-Civil General District Court", "Richmond City General District Court")) %>%
+  filter(county %in% c("Richmond City General District Court", "Chesterfield General District Court", "Henrico General District Court", "Hanover General District Court")) %>%
+  filter(filed_year != 2023) %>% 
+  group_by(county, filed_year) %>%
+  summarize(num_evictions = n(), 
+            num_plaintiff = sum(judgment == "Plaintiff", na.rm = TRUE), 
+            pct_plaintiff = num_plaintiff/num_evictions * 100)
+
+
+case_examination_avg <- case_examination_county %>%
+  group_by(filed_year) %>%
+  summarize(pct_plaintiff = mean(pct_plaintiff, na.rm = TRUE))
+
+
+p <- ggplot() +
+  geom_line(data = case_examination_county, aes(x = filed_year, y = pct_plaintiff, color = county)) +
+  geom_point(data = case_examination_county, aes(x = filed_year, y = pct_plaintiff, color = county)) +
+  geom_line(data = case_examination_avg, aes(x = filed_year, y = pct_plaintiff, color = "Average")) +
+  labs(title = "Percentage of Plaintiff Judgments by Year Filed and County",
+       x = "Year Filed",
+       y = "Percentage of Plaintiff Judgments",
+       color = "County") +
+  theme_minimal() +
+  scale_color_brewer(palette = "BrBG")
+
+
+ggplotly(p, tooltip = c("county", "filed_year", "pct_plaintiff"), 
+          hoverinfo = "text", dynamicTicks = TRUE) %>% 
+  layout(legend = list(orientation = "h", y = -0.2)) %>%
+  config(displayModeBar = TRUE)
+
+
+
+
+
+```
+
+
+
+# Research Sources {data-orientation="rows"}
+
+### **Research Question 1: How do continuing disproportionate evictions of Black neighborhoods affect eviction fees?**
+
+Howell, K. (2020). [Displacement, Demobilization, and Democracy: Current Eviction and Historic Dispossession in Richmond, Virginia](https://metropolitics.org/Displacement-Demobilization-and-Democracy-Current-Eviction-and-Historic.html). Metropolitics.org. 
+
+Howell and Teresa study the disproportionate evictions of Black neighborhoods in Richmond from 2000-2016. They note that half of the ten cities with the most eviction rates were in Virginia, which exemplifies an increased eviction filing rate in Virginia alone. Despite the increased eviction rates across Virginia, Richmond has been impacted the most by evictions due to centuries of political and physical displacement. This has led to a lack of community-based capacity to combat housing instability and establish a good home for their families.
+
+The study brought to light many data points that demonstrates the discrimination faced by communities of color relative to White residents: 
+- The national eviction rate was 5.2%, whereas Richmond’s eviction rate was twice the rate, with more than 11% of the tenants being evicted
+- This rate was 3% lower in West End, where most White individuals resided whereas, it was exponentially higher in the East End, Northside and Southside where there more Black individuals resided
+- Even after controlling for (statistical method to account for the variable so that it does not bias our estimates by acting as a confounder) income and home value, race played a vital role in the rate of evictions
+- Virginia’s disturbing history has faced elites trying to use the appropriation of living space to uphold white power. 
+
+Howell and Teresa examine how historical laws, policies, and practices have been used to suppress the power and voice of African American communities in the United States. It begins with the imposition of slave laws before the Civil War, which laid the foundation for the exploitation and oppression of African Americans. After the Civil War, Black Codes and Jim Crow laws were used to curtail the rights and movement of African Americans while lynching and harassment were used to maintain control over these communities.
+
+In the 20th century, state projects like urban renewal, slum clearance, and highway projects were used to perpetuate racial segregation and marginalize African American communities in Southern towns and cities. These projects were often based on the racial categorization of communities and destroyed existing power and spatial distributions of African Americans. The consequences of these actions and fears of terror made it difficult for African American communities to organize and gain political influence and representation.
+
+Furthermore, Howell and Teresa argue that segregation in the United States created a profitable housing market for those who owned homes but excluded Black people from ownership and perpetuated racial inequality. Segregation in housing was enforced through a variety of means, including redlining, restrictive covenants, and discriminatory lending practices. Redlining was a practice where banks and other lending institutions would refuse to lend money or provide services in certain neighborhoods, typically those with high populations of people of color. Restrictive covenants were clauses in property deeds that restricted property sale to people of a certain race or ethnicity. Discriminatory lending practices included offering higher interest rates or requiring higher down payments to people of color.
+
+As a result, segregation created a profitable housing market for those who did own homes but excluded Black people from ownership and perpetuated racial inequality. Homeownership is one of the primary ways families build wealth in the United States, and the exclusion of Black people from this market meant that they could not build generational wealth through homeownership. This exclusion also resulted in overcrowding, substandard housing, and lacking investment in Black communities.
+In order to effectively address the crisis, housing policies need to focus on engaging residents in a meaningful way that empowers them to take an active role in organizing, decision-making, and idea generation about how to move forward. This requires attention to the capacity of community-based organizations that have built trust and are committed to building strong, resident-driven processes and programs. By prioritizing community involvement, anti-displacement policies can begin to address the root causes of the eviction crisis and empower residents to take ownership of their communities. 
+
+
+### **Research Question 2: How often are landlords in the community at fault? Do most housing policies cater to the needs of the landlords, leaving the tenants to be evicted at an alarming rate?**
+
+Badger, E., & Bui, Q. (2023). [In 83 Million Eviction Records, a Sweeping and Intimate New Look at Housing in America](https://www.nytimes.com/interactive/2018/04/07/upshot/millions-of-eviction-records-a-sweeping-new-look-at-housing-in-america.html) (Published 2018). The New York Times.
+
+Badger and Bui’s article on The Upshot examines Richmond's eviction rates, one of the country's highest, through the lens of racial discrimination. The article begins by introducing the book “Evicted” by Matthew Desmond, which documented the ever-increasing poverty of Milwaukee's poor households after they lost their homes. It draws upon several databases of eviction court cases that Desmond has collected over the years to illustrate the injustices faced by tenants by their landlords. Badger and Bui highlight an important issue regarding evictions in Richmond - many of those facing eviction do not even make it to court. Additionally, the median amount owed is only $686 underscores the urgent need for more equitable housing policies and support for those struggling to make ends meet. It is clear that many people facing eviction are not doing so because of any fault of their own, but rather because of systemic issues such as poverty and a lack of affordable housing. 
+In some cities, tenants have access to legal aid and are shielded from steep rent increases through rent control policies, which help to prevent displacement and ensure that low-income tenants are not priced out of their homes.
+
+In addition, some states have laws that allow tenants to deduct repair costs from their rent, providing an essential avenue for tenants to ensure that their living conditions are safe and habitable. Unfortunately, these protections are not available to tenants in Richmond, leaving them vulnerable to exploitation and abuse by landlords.
+
+Badger and Bui argue that to address this issue, there is a need for increased legal protections and support for tenants in Richmond. This could include policies such as rent control, which would help ensure that tenants are not subject to unaffordable rent increases, and laws that allow tenants to deduct repair costs from their rent. It is also essential to address the underlying issues of poverty and inequality that contribute to the housing crisis through initiatives such as affordable housing programs and job training and education programs that help low-income residents to improve their economic prospects.
+
+### **Research Question 3: How much more charges are being incurred by those evicted in Richmond? Is there a disparity in evictions between affordabe care housing and other housing?** 
+
+Howell, K. (n.d.). [Eviction and the Rental Housing Market](https://cura.vcu.edu/media/cura/pdfs/cura-documents/EvictionandtheRentalHousingMarketintheCommonwealth.pdf). Retrieved May 4, 2023
+
+This article by Kathryn Howell at the RVA Eviction Lab highlights increasing evictions and homelessness in Richmond, Virginia compared to the rest of the Commonwealth and the high-cost burden on families facing evictions. 
+
+The statistics presented in the article illustrate the rent burden faced by households of different income levels and regions in Virginia. Extremely Low Income (ELI) households, which earn less than 30% of the Area Median Income (AMI), have the highest cost burden, with 87% of these households statewide being cost-burdened.
+
+Very Low Income (VLI) households, which earn between 30% and 50% of AMI, also face a high-cost burden, with 80% of these households statewide being cost-burdened. Statewide, 72% of ELI renter households face an extreme cost burden, meaning they pay more than 50% of their incomes for housing. These figures highlight the severity of the housing affordability crisis in Virginia, particularly for low-income households.
+
+The article further delves into the affordable housing market that often leads to housing market segmentation, ultimately causing serious discrepancies for renters, particularly those from marginalized communities. Discrimination and biased screening practices can limit safe and affordable housing access and exacerbate existing inequalities. For example, suppose landlords consistently refuse to accept Section 8 vouchers or discriminate against people of color or those with criminal records. In that case, these individuals may be forced to live in substandard housing or neighborhoods with fewer opportunities and resources. This, in turn, can lead to cycles of poverty and exclusion that are difficult to break. Addressing housing market segmentation will require policy solutions addressing discrimination and promoting equal housing access for all renters.
+
+Howell also notes that affordable housing units face the city’s highest rates of eviction and rent burden in addition to failing schools and inaccessibility to healthy food and banking institutions. However, there is a deficit of almost 200,000 affordable housing units in Virginia for families earning less than half of the state median income. The Richmond region alone faces a shortage of nearly 29,000 units. This shortage of affordable housing highlights the need for more investment and attention to be directed toward creating affordable housing units for households earning less than 50% of the Area's Median Income. 
+
+Howell suggests that local governments should play a critical role in addressing the affordable housing shortage. They should develop comprehensive housing plans that address the preservation and creation of affordable housing at all income levels. This could include policies such as inclusionary zoning, which requires a certain percentage of new developments to include affordable units, and land trusts, which allow for the creation of permanently affordable housing.
+
+Additionally, local governments can provide financial incentives and tax breaks for developers who include affordable units in their projects. They can also streamline the development process to make building affordable housing more accessible and cost-effective.
+
+
+# About {data-orientation="rows"}
+
+## Row
+
+### Authors
+
+Kate Driebe and Amruta Liz Binoy created this dashboard with help from Professor Michele Claibourn in LPPS 5720: Public Interest Data at the University of Virginia.
+
